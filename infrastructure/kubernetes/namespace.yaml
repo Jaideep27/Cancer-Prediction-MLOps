@@ -1,7 +1,5 @@
+# A namespace is a folder inside the cluster: names, permissions and quotas are scoped to it.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: cancer-mlops
-  labels:
-    name: cancer-mlops
-    environment: production

@@ -1,93 +1,69 @@
-"""Pytest configuration and fixtures."""
+"""Shared test fixtures.
 
-import sys
+The API tests do NOT depend on you having run full training: they train a tiny
+logistic regression in a temp folder and point the API at it. Tests must be
+fast, isolated and runnable on a fresh CI machine.
+"""
+
+import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-
-@pytest.fixture
-def sample_data():
-    """Create sample cancer data for testing."""
-    np.random.seed(42)
-
-    n_samples = 100
-    n_features = 30
-
-    # Generate random features
-    data = np.random.randn(n_samples, n_features)
-
-    # Create feature names
-    feature_prefixes = ["radius", "texture", "perimeter", "area", "smoothness",
-                       "compactness", "concavity", "concave points", "symmetry",
-                       "fractal_dimension"]
-    feature_suffixes = ["_mean", "_se", "_worst"]
-
-    features = [f"{prefix}{suffix}" for prefix in feature_prefixes for suffix in feature_suffixes]
-
-    # Create DataFrame
-    df = pd.DataFrame(data, columns=features)
-
-    # Add target
-    df["target"] = np.random.randint(0, 2, n_samples)
-
-    return df
+from src.config import PROJECT_ROOT
+from src.data.load import load_raw
+from src.data.preprocess import train_test_split_stratified
+from src.data.schema import FEATURE_COLUMNS
+from src.data.validate import validate_and_clean
+from src.models.build import build_base_models
+from src.models.bundle import save_bundle
 
 
-@pytest.fixture
-def sample_features():
-    """Create sample feature dictionary."""
-    return {
-        "radius_mean": 17.99,
-        "texture_mean": 10.38,
-        "perimeter_mean": 122.8,
-        "area_mean": 1001.0,
-        "smoothness_mean": 0.1184,
-        "compactness_mean": 0.2776,
-        "concavity_mean": 0.3001,
-        "concave points_mean": 0.1471,
-        "symmetry_mean": 0.2419,
-        "fractal_dimension_mean": 0.07871,
-        "radius_se": 1.095,
-        "texture_se": 0.9053,
-        "perimeter_se": 8.589,
-        "area_se": 153.4,
-        "smoothness_se": 0.006399,
-        "compactness_se": 0.04904,
-        "concavity_se": 0.05373,
-        "concave points_se": 0.01587,
-        "symmetry_se": 0.03003,
-        "fractal_dimension_se": 0.006193,
-        "radius_worst": 25.38,
-        "texture_worst": 17.33,
-        "perimeter_worst": 184.6,
-        "area_worst": 2019.0,
-        "smoothness_worst": 0.1622,
-        "compactness_worst": 0.6656,
-        "concavity_worst": 0.7119,
-        "concave points_worst": 0.2654,
-        "symmetry_worst": 0.4601,
-        "fractal_dimension_worst": 0.1189,
+@pytest.fixture(scope="session")
+def raw_df() -> pd.DataFrame:
+    return load_raw()
+
+
+@pytest.fixture(scope="session")
+def clean_df(raw_df: pd.DataFrame) -> pd.DataFrame:
+    return validate_and_clean(raw_df)
+
+
+@pytest.fixture(scope="session")
+def bundle_dir(clean_df: pd.DataFrame, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    X_train, _, y_train, _ = train_test_split_stratified(clean_df)
+    model = build_base_models()["logistic_regression"].fit(X_train, y_train)
+    metadata = {
+        "model_name": "cancer-classifier",
+        "model_version": "test",
+        "model_type": "logistic_regression",
+        "threshold": 0.5,
+        "feature_columns": FEATURE_COLUMNS,
     }
+    return save_bundle(tmp_path_factory.mktemp("model"), model, metadata, X_train)
 
 
 @pytest.fixture
-def sample_X_y(sample_data):
-    """Create sample X and y arrays."""
-    feature_cols = [col for col in sample_data.columns if col != "target"]
-    X = sample_data[feature_cols].values
-    y = sample_data["target"].values
-    return X, y
+def client(bundle_dir: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MODEL_DIR", str(bundle_dir))
+    monkeypatch.delenv("API_KEY", raising=False)
+    from src.api.main import app
+
+    with TestClient(app) as c:  # "with" runs the startup (lifespan) -> model is loaded
+        yield c
+
+
+def _example(name: str) -> dict:
+    return json.loads((PROJECT_ROOT / "examples" / f"{name}.json").read_text())
 
 
 @pytest.fixture
-def tmp_model_dir(tmp_path):
-    """Create temporary model directory."""
-    model_dir = tmp_path / "models" / "test_model"
-    model_dir.mkdir(parents=True)
-    return model_dir
+def malignant_case() -> dict:
+    return _example("malignant")
+
+
+@pytest.fixture
+def benign_case() -> dict:
+    return _example("benign")

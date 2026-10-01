@@ -1,0 +1,18 @@
+# Prometheus PULLS metrics: every scrape_interval it does GET http://api:8000/metrics
+# and stores each number with a timestamp (a time series).
+global:
+  scrape_interval: 5s       # short for the demo; 15-60s is typical in production
+  evaluation_interval: 5s   # how often alert rules are checked
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+scrape_configs:
+  - job_name: cancer-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]   # "api" = the Compose service name, resolved by Docker DNS
+
+  - job_name: prometheus      # Prometheus monitors itself too
+    static_configs:
+      - targets: ["localhost:9090"]

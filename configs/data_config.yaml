@@ -1,80 +1,9 @@
-# Data Configuration
-
-# Data Paths
-paths:
-  raw_data: "data/raw/breast-cancer.csv"
-  processed_train: "data/processed/train.csv"
-  processed_test: "data/processed/test.csv"
-  processed_validation: "data/processed/validation.csv"
-
-# Data Processing
-preprocessing:
-  drop_columns:
-    - "id"
-
-  label_encoding:
-    column: "diagnosis"
-    mapping:
-      M: 1  # Malignant
-      B: 0  # Benign
-
-  rename_columns:
-    diagnosis: "target"
-
-  convert_to_int: false
-  handle_missing_values: "drop"  # Options: drop, impute, none
-
-  scaling:
-    method: "none"  # Options: standard, minmax, robust, none
-    exclude_columns: ["target"]
-
-# Data Splitting
-splitting:
-  test_size: 0.25
-  validation_size: 0.0  # From remaining after test split
-  random_state: 0
-  stratify: true  # Stratify by target variable
-
-# Data Validation
-validation:
-  check_missing_values: true
-  check_duplicates: true
-  check_target_balance: true
-  min_samples: 100
-  max_missing_ratio: 0.05
-
-# Feature Configuration
-features:
-  numeric_features:
-    - "radius_mean"
-    - "texture_mean"
-    - "perimeter_mean"
-    - "area_mean"
-    - "smoothness_mean"
-    - "compactness_mean"
-    - "concavity_mean"
-    - "concave points_mean"
-    - "symmetry_mean"
-    - "fractal_dimension_mean"
-    - "radius_se"
-    - "texture_se"
-    - "perimeter_se"
-    - "area_se"
-    - "smoothness_se"
-    - "compactness_se"
-    - "concavity_se"
-    - "concave points_se"
-    - "symmetry_se"
-    - "fractal_dimension_se"
-    - "radius_worst"
-    - "texture_worst"
-    - "perimeter_worst"
-    - "area_worst"
-    - "smoothness_worst"
-    - "compactness_worst"
-    - "concavity_worst"
-    - "concave points_worst"
-    - "symmetry_worst"
-    - "fractal_dimension_worst"
-
-  categorical_features: []
+# Where the data lives and how to split it.
+data:
+  raw_path: data/raw/data.csv
+  target_column: diagnosis
+  id_column: id
+  positive_label: M        # malignant = the class we must not miss (encoded as 1)
+  negative_label: B        # benign (encoded as 0)
+  test_size: 0.2           # 20% held out, never touched during training/tuning
+  random_state: 42         # same split every run, so runs are comparable

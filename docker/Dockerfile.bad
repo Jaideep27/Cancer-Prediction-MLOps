@@ -1,0 +1,23 @@
+# ANTI-EXAMPLE. Do not use. Kept to compare with docker/Dockerfile.
+#   docker build -f docker/Dockerfile.bad -t cancer-api:bad .
+#   docker images cancer-api     <- compare the sizes
+
+# 1. "latest" changes over time: the same Dockerfile builds a different image next month.
+#    The full (non-slim) image is also ~1 GB bigger.
+FROM python:latest
+
+# 2. No WORKDIR: files land in / mixed with the OS.
+# 3. COPY . . BEFORE installing dependencies: ANY code change invalidates the cache,
+#    so every rebuild re-downloads every package (minutes instead of seconds).
+#    Without a .dockerignore it would also copy venv/, .git/, mlflow.db, data...
+COPY . .
+
+# 4. Installs dev tools (pytest, black, mypy) and MLflow the API never uses,
+#    with no version pinning -> bigger image, bigger attack surface, not reproducible.
+RUN pip install -r requirements-dev.txt
+
+# 5. No USER: runs as root.
+# 6. No HEALTHCHECK: Docker can't tell "running" from "working".
+# 7. Shell form: /bin/sh is PID 1, not uvicorn, so SIGTERM is not forwarded
+#    and `docker stop` waits 10s and then kills the process.
+CMD python -m uvicorn src.api.main:app --host 0.0.0.0

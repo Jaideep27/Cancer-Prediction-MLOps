@@ -1,183 +1,84 @@
-"""Model evaluation utilities."""
+"""Metrics, decision threshold selection and confidence intervals.
 
-from typing import Any, Dict, Optional
+Positive class = 1 = malignant. So:
+- recall    = of all real cancers, how many did we catch?   (missed cancer = false negative)
+- precision = of all "cancer" predictions, how many were right? (false alarm = false positive)
+"""
+
+from typing import Any
 
 import numpy as np
 from sklearn.metrics import (
     accuracy_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
-    f1_score,
     roc_auc_score,
-    confusion_matrix,
-    classification_report,
 )
 
-from .base_model import BaseModel
-from ..utils.logger import get_logger
-
-logger = get_logger(__name__)
+METRIC_NAMES = ["accuracy", "precision", "recall", "f1", "roc_auc"]
 
 
-class ModelEvaluator:
-    """Evaluates model performance."""
+def compute_metrics(y_true: Any, proba: np.ndarray, threshold: float = 0.5) -> dict[str, float]:
+    """All headline metrics for P(malignant) scores at a given decision threshold."""
+    y_true = np.asarray(y_true)
+    y_pred = (proba >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+    return {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+        # ROC-AUC uses the raw probabilities, so it does not depend on the threshold.
+        "roc_auc": float(roc_auc_score(y_true, proba)),
+        "true_negatives": int(tn),
+        "false_positives": int(fp),
+        "false_negatives": int(fn),  # missed cancers: the number we care most about
+        "true_positives": int(tp),
+    }
 
-    def __init__(self, model: Optional[BaseModel] = None):
-        """
-        Initialize evaluator.
 
-        Args:
-            model: Model to evaluate
-        """
-        self.model = model
+def choose_threshold(y_true: Any, proba: np.ndarray, target_recall: float) -> float:
+    """Highest threshold that still reaches target_recall, capped at 0.5.
 
-    def set_model(self, model: BaseModel) -> None:
-        """
-        Set model to evaluate.
+    Must be called on OUT-OF-FOLD training predictions, never on the test set,
+    otherwise the test score is no longer an honest estimate.
+    The cap means we only ever LOWER the bar for "malignant", never raise it.
+    """
+    _, recall, thresholds = precision_recall_curve(np.asarray(y_true), proba)
+    # recall[i] is the recall when predicting positive for proba >= thresholds[i].
+    ok = np.where(recall[:-1] >= target_recall)[0]
+    if len(ok) == 0:
+        return 0.5
+    return float(min(0.5, thresholds[ok.max()]))
 
-        Args:
-            model: Model instance
-        """
-        self.model = model
 
-    def evaluate(
-        self, X: np.ndarray, y_true: np.ndarray, return_predictions: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Evaluate model performance.
+def bootstrap_ci(
+    y_true: Any,
+    proba: np.ndarray,
+    threshold: float,
+    n_resamples: int = 1000,
+    seed: int = 42,
+) -> dict[str, tuple[float, float]]:
+    """95% confidence intervals by resampling the test set with replacement.
 
-        Args:
-            X: Input features
-            y_true: True labels
-            return_predictions: Whether to return predictions
-
-        Returns:
-            Dictionary with evaluation metrics
-        """
-        if self.model is None:
-            raise ValueError("No model set. Call set_model() first.")
-
-        logger.info(f"Evaluating model on {len(X)} samples")
-
-        # Make predictions
-        y_pred = self.model.predict(X)
-        y_proba = self.model.predict_proba(X) if hasattr(self.model, "predict_proba") else None
-
-        # Calculate metrics
-        metrics = self.calculate_metrics(y_true, y_pred, y_proba)
-
-        if return_predictions:
-            metrics["predictions"] = y_pred
-            if y_proba is not None:
-                metrics["probabilities"] = y_proba
-
-        return metrics
-
-    def calculate_metrics(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        y_proba: Optional[np.ndarray] = None,
-    ) -> Dict[str, Any]:
-        """
-        Calculate evaluation metrics.
-
-        Args:
-            y_true: True labels
-            y_pred: Predicted labels
-            y_proba: Predicted probabilities (optional)
-
-        Returns:
-            Dictionary of metrics
-        """
-        metrics = {
-            "accuracy": float(accuracy_score(y_true, y_pred)),
-            "precision": float(precision_score(y_true, y_pred, average="binary")),
-            "recall": float(recall_score(y_true, y_pred, average="binary")),
-            "f1_score": float(f1_score(y_true, y_pred, average="binary")),
-        }
-
-        # Add ROC AUC if probabilities available
-        if y_proba is not None:
-            # Use probability of positive class
-            if y_proba.ndim > 1:
-                y_proba_positive = y_proba[:, 1]
-            else:
-                y_proba_positive = y_proba
-
-            metrics["roc_auc"] = float(roc_auc_score(y_true, y_proba_positive))
-
-        # Confusion matrix
-        cm = confusion_matrix(y_true, y_pred)
-        metrics["confusion_matrix"] = cm.tolist()
-
-        # Normalized confusion matrix
-        cm_normalized = confusion_matrix(y_true, y_pred, normalize="true")
-        metrics["confusion_matrix_normalized"] = cm_normalized.tolist()
-
-        # Classification report
-        report = classification_report(y_true, y_pred, output_dict=True)
-        metrics["classification_report"] = report
-
-        logger.info(f"Evaluation metrics: Accuracy={metrics['accuracy']:.3f}, "
-                   f"Precision={metrics['precision']:.3f}, "
-                   f"Recall={metrics['recall']:.3f}, "
-                   f"F1={metrics['f1_score']:.3f}")
-
-        return metrics
-
-    def compare_models(
-        self, models: Dict[str, BaseModel], X: np.ndarray, y_true: np.ndarray
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Compare multiple models.
-
-        Args:
-            models: Dictionary of model name to model instance
-            X: Input features
-            y_true: True labels
-
-        Returns:
-            Dictionary of model names to their metrics
-        """
-        logger.info(f"Comparing {len(models)} models")
-
-        results = {}
-
-        for model_name, model in models.items():
-            logger.info(f"Evaluating {model_name}")
-            self.set_model(model)
-            metrics = self.evaluate(X, y_true)
-            results[model_name] = metrics
-
-        return results
-
-    def get_best_model(
-        self,
-        models: Dict[str, BaseModel],
-        X: np.ndarray,
-        y_true: np.ndarray,
-        metric: str = "accuracy",
-    ) -> tuple:
-        """
-        Find the best performing model.
-
-        Args:
-            models: Dictionary of model name to model instance
-            X: Input features
-            y_true: True labels
-            metric: Metric to use for comparison
-
-        Returns:
-            Tuple of (best_model_name, best_model, metrics)
-        """
-        results = self.compare_models(models, X, y_true)
-
-        # Find best model based on metric
-        best_name = max(results, key=lambda name: results[name][metric])
-        best_model = models[best_name]
-        best_metrics = results[best_name]
-
-        logger.info(f"Best model: {best_name} ({metric}={best_metrics[metric]:.3f})")
-
-        return best_name, best_model, best_metrics
+    With only ~114 test rows, one or two patients move accuracy by ~1%,
+    so a single number hides a lot of uncertainty. The interval shows it.
+    """
+    rng = np.random.default_rng(seed)
+    y_true = np.asarray(y_true)
+    n = len(y_true)
+    samples: dict[str, list[float]] = {m: [] for m in METRIC_NAMES}
+    for _ in range(n_resamples):
+        idx = rng.integers(0, n, n)
+        if len(np.unique(y_true[idx])) < 2:  # ROC-AUC needs both classes
+            continue
+        m = compute_metrics(y_true[idx], proba[idx], threshold)
+        for name in METRIC_NAMES:
+            samples[name].append(m[name])
+    return {
+        name: (float(np.percentile(v, 2.5)), float(np.percentile(v, 97.5)))
+        for name, v in samples.items()
+    }

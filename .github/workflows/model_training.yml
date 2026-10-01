@@ -1,66 +1,46 @@
-name: Model Training Pipeline
+# Scheduled retraining: every Monday 06:00 UTC (and on demand).
+# The run fails (and GitHub emails you) if the new model does not pass the quality gate.
+#
+# HONEST NOTE: the dataset in this repo is static, so retraining reproduces the same
+# model. In a real system this job would first pull NEW labelled data (e.g. from a
+# warehouse), and would usually be triggered by the drift alert, not only the clock.
+name: Scheduled model training
 
 on:
-  workflow_dispatch:
-    inputs:
-      model_version:
-        description: 'Model version to train'
-        required: true
-        default: '1.0'
   schedule:
-    # Run weekly on Sunday at 00:00 UTC
-    - cron: '0 0 * * 0'
+    - cron: "0 6 * * 1"      # minute hour day-of-month month day-of-week (UTC)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
   train:
     runs-on: ubuntu-latest
-
+    timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: "requirements*.txt"
+      - run: pip install -r requirements.txt -c requirements.lock.txt
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
+      - name: Train, evaluate, quality gate
+        run: python -m scripts.train
+        env:
+          GIT_SHA: ${{ github.sha }}
+          # Point at a shared MLflow server to keep history across runs, e.g.
+          # MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          # Without it, runs go to a throwaway SQLite file uploaded below.
 
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -e .
-
-    - name: Download data
-      run: |
-        # Add data download logic here if needed
-        echo "Data download step"
-
-    - name: Train models
-      run: |
-        python scripts/train_model.py --version ${{ github.event.inputs.model_version || '1.0' }}
-
-    - name: Evaluate models
-      run: |
-        python scripts/evaluate_model.py
-
-    - name: Upload model artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: trained-models-${{ github.event.inputs.model_version || '1.0' }}
-        path: |
-          models/
-          training_results.json
-          evaluation_results.json
-
-    - name: Upload to model registry
-      run: |
-        echo "Upload to model registry"
-        # Add model registry upload logic
-        # Examples: MLflow, AWS SageMaker, Azure ML, etc.
+      - name: Upload model, metrics and MLflow history
+        if: always()               # upload even when the gate fails, to inspect why
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-run-${{ github.run_number }}
+          path: |
+            artifacts/
+            mlflow.db
+          retention-days: 30

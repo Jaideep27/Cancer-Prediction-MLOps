@@ -1,0 +1,77 @@
+{
+  "uid": "cancer-api",
+  "title": "Cancer Prediction API",
+  "tags": ["mlops"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "API instances up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(up{job=\"cancer-api\"})" }],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+        { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 2, "type": "stat", "title": "Model version",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "max by (version, type) (model_info{job=\"cancer-api\"})", "legendFormat": "v{{version}} ({{type}})" }],
+      "options": { "textMode": "name", "colorMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Data drift: share of features drifted",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "max(data_drift_share{job=\"cancer-api\"})" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1,
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "orange", "value": 0.05 }, { "color": "red", "value": 0.1 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Error rate (5xx, last 5m)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(rate(http_requests_total{job=\"cancer-api\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{job=\"cancer-api\"}[5m])), 1e-9)" }],
+      "fieldConfig": { "defaults": { "unit": "percentunit",
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] } }, "overrides": [] }
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Request rate (req/s) by endpoint and status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (path, status) (rate(http_requests_total{job=\"cancer-api\"}[1m]))", "legendFormat": "{{path}} {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Prediction latency (p50 / p95 / p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"cancer-api\",path=~\"/predict.*\"}[1m])))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"cancer-api\",path=~\"/predict.*\"}[1m])))", "legendFormat": "p95" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"cancer-api\",path=~\"/predict.*\"}[1m])))", "legendFormat": "p99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] }
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Predictions per second by diagnosis",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (diagnosis) (rate(predictions_total{job=\"cancer-api\"}[1m]))", "legendFormat": "{{diagnosis}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Client errors (4xx) per second -- e.g. invalid input (422)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (path, status) (rate(http_requests_total{job=\"cancer-api\",status=~\"4..\"}[1m]))", "legendFormat": "{{path}} {{status}}" }],
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] }
+    }
+  ]
+}

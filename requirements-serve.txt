@@ -1,0 +1,12 @@
+# Serving dependencies: the minimum the prediction API needs at runtime.
+# This is the ONLY file installed into the Docker image (no MLflow, no test tools).
+numpy>=2.1
+pandas>=2.2
+scipy>=1.14
+scikit-learn>=1.6
+joblib>=1.4
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.9
+prometheus-client>=0.21
+pyyaml>=6.0

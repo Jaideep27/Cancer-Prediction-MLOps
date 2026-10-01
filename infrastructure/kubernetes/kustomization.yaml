@@ -1,46 +1,12 @@
+# `kubectl apply -k infrastructure/kubernetes` applies all of these, in the cancer-mlops namespace.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
 namespace: cancer-mlops
-
 resources:
   - namespace.yaml
-  - configmaps.yaml
-  - persistent-volumes.yaml
-  - api-deployment.yaml
-  - mlflow-deployment.yaml
-  - prometheus-deployment.yaml
-  - grafana-deployment.yaml
-  - ingress.yaml
-
-labels:
-  - pairs:
-      app.kubernetes.io/name: cancer-mlops
-      app.kubernetes.io/version: "1.0"
-      app.kubernetes.io/managed-by: kustomize
-
-# ConfigMap Generator (optional - for generating ConfigMaps from files)
-# configMapGenerator:
-#   - name: app-config
-#     files:
-#       - configs/deployment_config.yaml
-
-# Image transformations (update image tags for all deployments)
-# images:
-#   - name: cancer-mlops-api
-#     newName: your-registry/cancer-mlops-api
-#     newTag: v1.0.0
-
-# Resource modifications
-commonLabels:
-  environment: production
-  project: cancer-mlops
-
-# Patches (for environment-specific modifications)
-# patchesStrategicMerge:
-#   - patches/production.yaml
-
-# Replicas (override replica counts)
-# replicas:
-#   - name: api-deployment
-#     count: 5
+  - configmap.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml

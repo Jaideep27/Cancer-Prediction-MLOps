@@ -1,68 +1,21 @@
-# Git
-.git
-.gitignore
-.gitattributes
-
-# CI/CD
-.github
-
-# Python
-__pycache__
-*.py[cod]
-*$py.class
-*.so
-.Python
-*.egg-info/
-dist/
-build/
-
-# Virtual environments
+# Everything listed here is NOT sent to Docker as build context.
+# Smaller context = faster builds, and no secrets or junk can end up in the image.
 venv/
-env/
-ENV/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Tests
-tests/
+.venv/
+.git/
+.github/
+__pycache__/
+*.pyc
 .pytest_cache/
+.mypy_cache/
 .coverage
 htmlcov/
-
-# Documentation
-docs/
-*.md
-!README.md
-
-# Jupyter
-*.ipynb
-.ipynb_checkpoints
-
-# Data (use volumes instead)
-data/
-!data/raw/.gitkeep
-
-# Models (use volumes or model registry)
-models/
-experiments/
-
-# Logs
-logs/
-*.log
-
-# MLflow
 mlruns/
-
-# DVC
-.dvc/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Development dependencies
-requirements-dev.txt
+mlartifacts/
+mlflow.db
+data/
+tests/
+infrastructure/
+artifacts/metrics/
+.env
+*.md

@@ -1,0 +1,18 @@
+# Service = one stable address in front of a changing set of pods.
+# Pods come and go (new IPs every time); the Service finds the current ones by LABEL
+# and spreads connections across those that are READY.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cancer-api
+  labels:
+    app.kubernetes.io/name: cancer-api
+spec:
+  type: NodePort                 # reachable from outside the cluster on <node>:30080
+  selector:
+    app.kubernetes.io/name: cancer-api
+  ports:
+    - name: http
+      port: 80                   # inside the cluster: http://cancer-api.cancer-mlops/
+      targetPort: http           # -> containerPort 8000
+      nodePort: 30080            # outside: http://127.0.0.1:30080 (kind maps it to your laptop)

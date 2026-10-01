@@ -1,0 +1,10 @@
+# Tells Grafana where Prometheus is, at startup. "prometheus" is the Compose service name.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy           # Grafana's server queries Prometheus (not your browser)
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

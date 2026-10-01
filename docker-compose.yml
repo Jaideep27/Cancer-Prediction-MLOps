@@ -1,0 +1,83 @@
+# The whole local stack with one command:   docker compose up -d --build
+#
+#   api         http://localhost:8000/docs   prediction service (our image)
+#   mlflow      http://localhost:5000        experiment tracking + model registry
+#   prometheus  http://localhost:9090        scrapes api:8000/metrics every 5s
+#   grafana     http://localhost:3000        dashboards (admin / see .env)
+#
+# Services reach each other BY NAME (http://api:8000, http://prometheus:9090):
+# Compose puts them on one private network with its own DNS.
+name: cancer-mlops
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: cancer-api:latest
+    ports:
+      - "8000:8000"          # host:container
+    environment:
+      LOG_LEVEL: INFO
+      DRIFT_WINDOW: "500"
+      API_KEY: ${API_KEY:-}  # empty = auth disabled; set it in .env to require X-API-Key
+    restart: unless-stopped  # if the process crashes, Docker starts it again
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.16.1
+    command: >
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --allowed-hosts localhost,localhost:5000,127.0.0.1:5000,mlflow,mlflow:5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow  # runs + registry survive `docker compose down`
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle   # allows `curl -X POST localhost:9090/-/reload` after config edits
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy  # wait for the API's HEALTHCHECK, not just "container started"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      # "Provisioning": datasource + dashboard are created from files at startup (no clicking).
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+# Named volumes: Docker-managed storage that outlives containers.
+volumes:
+  mlflow-data:
+  prometheus-data:
+  grafana-data:

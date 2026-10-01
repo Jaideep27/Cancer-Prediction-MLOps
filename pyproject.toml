@@ -1,74 +1,28 @@
-[build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "cancer-mlops"
 version = "1.0.0"
-description = "MLOps pipeline for breast cancer prediction"
-readme = "README.md"
-requires-python = ">=3.8"
-license = {text = "MIT"}
-authors = [
-    {name = "Your Name", email = "your.email@example.com"}
-]
-keywords = ["mlops", "machine-learning", "cancer-prediction", "healthcare", "ensemble"]
+description = "Breast cancer prediction with a production-style MLOps stack"
+requires-python = ">=3.11"
 
 [tool.black]
 line-length = 100
-target-version = ['py38', 'py39', 'py310']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-  | \.venv
-  | \.pytest_cache
-  | \.mypy_cache
-  | __pycache__
-  | build
-  | dist
-  | experiments
-)/
-'''
+extend-exclude = "venv"
 
-[tool.isort]
-profile = "black"
-line_length = 100
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true   # sklearn, mlflow, scipy ship no/partial type hints
+warn_unused_ignores = true
+exclude = ["venv/"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = "-v --cov=src --cov-report=html --cov-report=term-missing"
-markers = [
-    "unit: Unit tests",
-    "integration: Integration tests",
-    "slow: Slow running tests",
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    # Starlette nags about its test client's HTTP library; harmless for our tests.
+    "ignore:Using `httpx` with `starlette.testclient`",
 ]
-
-[tool.mypy]
-python_version = "3.8"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-ignore_missing_imports = true
-exclude = ["venv", "experiments", "tests"]
 
 [tool.coverage.run]
 source = ["src"]
-omit = ["*/tests/*", "*/venv/*"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-]
+omit = ["src/models/train.py"]  # the full training run is exercised by the train workflow, not unit tests

@@ -1,0 +1,11 @@
+# PodDisruptionBudget: during VOLUNTARY disruptions (node drain, cluster upgrade)
+# Kubernetes must keep at least 2 pods running. It does not protect against crashes.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cancer-api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cancer-api

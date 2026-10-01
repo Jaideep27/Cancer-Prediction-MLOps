@@ -1,88 +1,112 @@
-name: Continuous Integration
+# CI = Continuous Integration: every push / pull request is checked automatically.
+# A PR cannot be trusted until all four jobs are green.
+name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main]
+
+# A new push to the same branch cancels the still-running older check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read   # least privilege: CI only needs to read the code
+
+env:
+  PYTHON_VERSION: "3.13"
+  # -c pins every package to the versions in the lock file (reproducible CI).
+  PIP_INSTALL: pip install -r requirements-dev.txt -c requirements.lock.txt
 
 jobs:
-  test:
+  lint:
+    name: Lint & type check
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ['3.8', '3.9', '3.10']
-
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip                      # reuse downloaded packages between runs
+          cache-dependency-path: "requirements*.txt"
+      - run: ${{ env.PIP_INSTALL }}
+      - name: black (formatting)
+        run: black --check src tests scripts
+      - name: flake8 (lint)
+        run: flake8 src tests scripts
+      - name: mypy (types)
+        run: mypy src scripts
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
-        pip install -e .
-
-    - name: Lint with flake8
-      run: |
-        flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
-        flake8 src tests --count --max-complexity=10 --max-line-length=100 --statistics
-
-    - name: Format check with black
-      run: |
-        black --check src tests scripts
-
-    - name: Run tests
-      run: |
-        pytest tests/ -v --cov=src --cov-report=xml --cov-report=term
-
-    - name: Upload coverage reports
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: "requirements*.txt"
+      - run: ${{ env.PIP_INSTALL }}
+      - name: pytest with coverage (fails under 80%)
+        run: pytest --cov --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
 
   security:
+    name: Security scan
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pip-audit bandit
+      - name: pip-audit (known vulnerabilities in the packages we ship)
+        run: pip-audit -r requirements-serve.txt
+      - name: bandit (insecure patterns in our own code)
+        run: bandit -r src -ll   # -ll = report medium and high severity only
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install safety bandit
-
-    - name: Security check with safety
-      run: |
-        safety check --json
-
-    - name: Security check with bandit
-      run: |
-        bandit -r src -f json -o bandit-report.json || true
-
-    - name: Upload security reports
-      uses: actions/upload-artifact@v3
-      with:
-        name: security-reports
-        path: |
-          bandit-report.json
+  docker:
+    name: Build & smoke-test image
+    needs: [lint, test]             # don't waste time building if the code is broken
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: "requirements*.txt"
+      - run: pip install -r requirements.txt -c requirements.lock.txt
+      - name: Train the model that goes into the image
+        run: python -m scripts.train
+        env:
+          GIT_SHA: ${{ github.sha }}
+      - name: Build image
+        run: docker build -f docker/Dockerfile -t cancer-api:ci .
+      - name: Run container and wait for healthy
+        run: |
+          docker run -d --name api -p 8000:8000 cancer-api:ci
+          for i in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' api)
+            echo "health: $status"; [ "$status" = "healthy" ] && break; sleep 2
+          done
+          [ "$status" = "healthy" ] || { docker logs api; exit 1; }
+      - name: Smoke test real predictions
+        run: |
+          curl -fsS localhost:8000/ready
+          curl -fsS -X POST localhost:8000/predict -H "Content-Type: application/json" \
+               -d @examples/malignant.json | tee /dev/stderr | grep -q '"malignant"'
+          curl -fsS -X POST localhost:8000/predict -H "Content-Type: application/json" \
+               -d @examples/benign.json | grep -q '"benign"'
+          code=$(curl -s -o /dev/null -w "%{http_code}" -X POST localhost:8000/predict \
+               -H "Content-Type: application/json" -d '{"radius_mean": -1}')
+          [ "$code" = "422" ]
+      - name: Image size
+        run: docker images cancer-api:ci

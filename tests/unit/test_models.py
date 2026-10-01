@@ -1,162 +1,108 @@
-"""Unit tests for models."""
+"""Model tests protect against: broken model code, leakage, wrong metric math, bad bundles."""
 
 import numpy as np
 import pytest
+from sklearn.model_selection import StratifiedKFold, cross_val_score
 
-from src.models.logistic_regression import LogisticRegressionModel
-from src.models.gradient_boosting import GradientBoostingModel
-from src.models.neural_network import NeuralNetworkModel
-from src.models.evaluate import ModelEvaluator
-
-
-class TestLogisticRegressionModel:
-    """Tests for Logistic Regression model."""
-
-    def test_build(self):
-        """Test model building."""
-        model = LogisticRegressionModel()
-
-        assert model.model is not None
-        assert model.model_name == "logistic_regression"
-
-    def test_fit_predict(self, sample_X_y):
-        """Test model training and prediction."""
-        X, y = sample_X_y
-        model = LogisticRegressionModel()
-
-        # Train
-        model.fit(X, y)
-        assert model.is_trained is True
-
-        # Predict
-        predictions = model.predict(X)
-        assert len(predictions) == len(y)
-        assert all(p in [0, 1] for p in predictions)
-
-    def test_predict_proba(self, sample_X_y):
-        """Test probability predictions."""
-        X, y = sample_X_y
-        model = LogisticRegressionModel()
-
-        model.fit(X, y)
-        probas = model.predict_proba(X)
-
-        assert probas.shape == (len(X), 2)
-        assert np.allclose(probas.sum(axis=1), 1.0)
-
-    def test_save_load(self, sample_X_y, tmp_model_dir):
-        """Test model saving and loading."""
-        X, y = sample_X_y
-        model = LogisticRegressionModel()
-        model.fit(X, y)
-
-        # Save
-        model.save(str(tmp_model_dir))
-
-        # Load
-        loaded_model = LogisticRegressionModel()
-        loaded_model.load(str(tmp_model_dir))
-
-        assert loaded_model.is_trained is True
-
-        # Compare predictions
-        orig_pred = model.predict(X[:10])
-        loaded_pred = loaded_model.predict(X[:10])
-
-        assert np.array_equal(orig_pred, loaded_pred)
+from src.data.preprocess import train_test_split_stratified
+from src.models.build import (
+    BASE_MODEL_NAMES,
+    build_base_models,
+    build_stacking_ensemble,
+    build_voting_ensemble,
+)
+from src.models.bundle import load_bundle, save_bundle
+from src.models.evaluate import bootstrap_ci, choose_threshold, compute_metrics
 
 
-class TestGradientBoostingModel:
-    """Tests for Gradient Boosting model."""
-
-    def test_build(self):
-        """Test model building."""
-        model = GradientBoostingModel()
-
-        assert model.model is not None
-        assert model.model_name == "gradient_boosting"
-
-    def test_fit_predict(self, sample_X_y):
-        """Test model training and prediction."""
-        X, y = sample_X_y
-        model = GradientBoostingModel()
-
-        model.fit(X, y)
-        predictions = model.predict(X)
-
-        assert len(predictions) == len(y)
-        assert model.is_trained is True
-
-    def test_feature_importance(self, sample_X_y):
-        """Test feature importance extraction."""
-        X, y = sample_X_y
-        model = GradientBoostingModel()
-
-        model.fit(X, y)
-        importance = model.get_feature_importance()
-
-        assert len(importance) == X.shape[1]
-        assert all(imp >= 0 for imp in importance)
+@pytest.fixture(scope="module")
+def split(clean_df):
+    return train_test_split_stratified(clean_df)
 
 
-class TestNeuralNetworkModel:
-    """Tests for Neural Network model."""
-
-    def test_build(self):
-        """Test model building."""
-        params = {
-            "hidden_layer_sizes": (10, 10),
-            "max_iter": 100,
-            "random_state": 42,
-        }
-        model = NeuralNetworkModel(params=params)
-
-        assert model.model is not None
-        assert model.model_name == "neural_network"
-
-    def test_fit_predict(self, sample_X_y):
-        """Test model training and prediction."""
-        X, y = sample_X_y
-        params = {
-            "hidden_layer_sizes": (10, 10),
-            "max_iter": 100,
-            "random_state": 42,
-        }
-        model = NeuralNetworkModel(params=params)
-
-        model.fit(X, y)
-        predictions = model.predict(X)
-
-        assert len(predictions) == len(y)
-        assert model.is_trained is True
+def test_all_base_models_exist():
+    assert list(build_base_models()) == BASE_MODEL_NAMES
 
 
-class TestModelEvaluator:
-    """Tests for Model Evaluator."""
+@pytest.mark.parametrize("name", BASE_MODEL_NAMES)
+def test_base_model_fits_and_outputs_probabilities(name, split):
+    X_train, X_test, y_train, _ = split
+    proba = build_base_models()[name].fit(X_train, y_train).predict_proba(X_test)
+    assert proba.shape == (len(X_test), 2)
+    assert np.all((proba >= 0) & (proba <= 1))
 
-    def test_evaluate(self, sample_X_y):
-        """Test model evaluation."""
-        X, y = sample_X_y
-        model = LogisticRegressionModel()
-        model.fit(X, y)
 
-        evaluator = ModelEvaluator(model)
-        metrics = evaluator.evaluate(X, y)
+@pytest.mark.parametrize("name", ["logistic_regression", "neural_network"])
+def test_scale_sensitive_models_scale_inside_pipeline(name):
+    # The scaler must live INSIDE the pipeline so it is refit on each training fold (no leakage).
+    assert "scaler" in build_base_models()[name].named_steps
 
-        assert "accuracy" in metrics
-        assert "precision" in metrics
-        assert "recall" in metrics
-        assert "f1_score" in metrics
-        assert "confusion_matrix" in metrics
 
-    def test_calculate_metrics(self):
-        """Test metric calculation."""
-        y_true = np.array([0, 1, 1, 0, 1])
-        y_pred = np.array([0, 1, 0, 0, 1])
+def test_ensembles_fit_and_predict(split):
+    X_train, X_test, y_train, _ = split
+    base = build_base_models()
+    cv = StratifiedKFold(3, shuffle=True, random_state=0)
+    for ensemble in (build_voting_ensemble(base), build_stacking_ensemble(base, cv)):
+        proba = ensemble.fit(X_train, y_train).predict_proba(X_test)[:, 1]
+        assert proba.shape == (len(X_test),)
 
-        evaluator = ModelEvaluator()
-        metrics = evaluator.calculate_metrics(y_true, y_pred)
 
-        assert metrics["accuracy"] == 0.8
-        assert "precision" in metrics
-        assert "recall" in metrics
+def test_model_clearly_beats_majority_baseline(split):
+    # Regression guard: always predicting "benign" scores ~0.63. A good model should be > 0.9.
+    X_train, _, y_train, _ = split
+    scores = cross_val_score(build_base_models()["logistic_regression"], X_train, y_train, cv=5)
+    assert scores.mean() > 0.9
+
+
+def test_compute_metrics_on_known_example():
+    y = np.array([1, 1, 1, 0, 0])
+    proba = np.array([0.9, 0.8, 0.3, 0.2, 0.6])  # at 0.5: TP=2, FN=1, TN=1, FP=1
+    m = compute_metrics(y, proba, threshold=0.5)
+    assert m["recall"] == pytest.approx(2 / 3)
+    assert m["precision"] == pytest.approx(2 / 3)
+    assert m["false_negatives"] == 1
+    assert m["false_positives"] == 1
+
+
+def test_lower_threshold_raises_recall():
+    y = np.array([1, 1, 1, 0, 0])
+    proba = np.array([0.9, 0.8, 0.3, 0.2, 0.6])
+    assert compute_metrics(y, proba, 0.25)["recall"] == 1.0
+
+
+def test_choose_threshold_meets_target_and_never_exceeds_half():
+    rng = np.random.default_rng(0)
+    y = rng.integers(0, 2, 300)
+    proba = np.clip(y * 0.6 + rng.normal(0.2, 0.2, 300), 0, 1)
+    t = choose_threshold(y, proba, target_recall=0.95)
+    assert t <= 0.5
+    assert compute_metrics(y, proba, t)["recall"] >= 0.95
+
+
+def test_bootstrap_ci_contains_point_estimate():
+    rng = np.random.default_rng(1)
+    y = rng.integers(0, 2, 200)
+    proba = np.clip(y * 0.5 + rng.normal(0.25, 0.2, 200), 0, 1)
+    point = compute_metrics(y, proba)["accuracy"]
+    low, high = bootstrap_ci(y, proba, 0.5, n_resamples=300)["accuracy"]
+    assert low <= point <= high
+
+
+def test_bundle_roundtrip(split, tmp_path):
+    X_train, X_test, y_train, _ = split
+    model = build_base_models()["logistic_regression"].fit(X_train, y_train)
+    save_bundle(
+        tmp_path,
+        model,
+        {"model_version": "7", "threshold": 0.3, "feature_columns": list(X_train.columns)},
+        X_train,
+    )
+    bundle = load_bundle(tmp_path)
+    assert bundle.version == "7"
+    assert bundle.threshold == 0.3
+    np.testing.assert_allclose(bundle.model.predict_proba(X_test), model.predict_proba(X_test))
+
+
+def test_incomplete_bundle_fails_loudly(tmp_path):
+    with pytest.raises(FileNotFoundError, match="missing"):
+        load_bundle(tmp_path)

@@ -1,0 +1,13 @@
+# Non-secret settings, injected into the pods as environment variables.
+# Change a value + `kubectl rollout restart` = new config without rebuilding the image.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cancer-api-config
+  labels:
+    app.kubernetes.io/name: cancer-api
+data:
+  LOG_LEVEL: "INFO"
+  DRIFT_WINDOW: "500"
+  DRIFT_MIN_SAMPLES: "30"
+  DRIFT_ALPHA: "0.05"

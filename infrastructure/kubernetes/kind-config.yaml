@@ -1,0 +1,15 @@
+# A local Kubernetes cluster made of Docker containers ("Kubernetes IN Docker").
+# 1 control-plane node (the brain) + 2 worker nodes (where pods run).
+#   kind create cluster --config infrastructure/kubernetes/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: cancer-mlops
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Your laptop's port 30080 -> the cluster's NodePort 30080 (see service.yaml).
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+  - role: worker
+  - role: worker

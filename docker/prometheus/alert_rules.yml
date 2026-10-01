@@ -1,0 +1,38 @@
+# Alert = a PromQL condition that must stay true for `for:` before it fires
+# (so one slow request doesn't page anyone). See them at http://localhost:9090/alerts
+groups:
+  - name: cancer-api
+    rules:
+      - alert: APIDown
+        expr: up{job="cancer-api"} == 0
+        for: 30s
+        labels: {severity: critical}
+        annotations:
+          summary: "Prediction API is not responding to Prometheus scrapes"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="cancer-api", status=~"5.."}[2m]))
+            / clamp_min(sum(rate(http_requests_total{job="cancer-api"}[2m])), 1e-9) > 0.05
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "More than 5% of requests are failing with 5xx errors"
+
+      - alert: HighPredictLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{job="cancer-api", path=~"/predict.*"}[2m]))
+          ) > 0.25
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "95% of predictions should finish under 250ms; they currently don't"
+
+      - alert: DataDriftDetected
+        expr: max(data_drift_detected{job="cancer-api"}) == 1
+        for: 30s
+        labels: {severity: warning}
+        annotations:
+          summary: "Recent inputs no longer match the training distribution (KS test)"
+          description: "Investigate the data source; consider retraining. See GET /drift for per-feature results."

@@ -1,0 +1,98 @@
+# Deployment = "keep N identical copies (pods) of this container running".
+# It creates a ReplicaSet, which creates/replaces pods until the count matches.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cancer-api
+  labels:
+    app.kubernetes.io/name: cancer-api
+spec:
+  # The HPA takes over this number once running. Note: re-applying this file resets it to 3
+  # until the HPA corrects it; production setups often omit `replicas` when an HPA manages it.
+  replicas: 3
+  revisionHistoryLimit: 5         # old ReplicaSets kept for `kubectl rollout undo`
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cancer-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                 # at most 1 extra pod during an update
+      maxUnavailable: 0           # never go below the desired count -> zero downtime
+  template:                       # the pod blueprint
+    metadata:
+      labels:
+        app.kubernetes.io/name: cancer-api
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread replicas across nodes: one node dying should not take all pods with it.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cancer-api
+      containers:
+        - name: api
+          image: cancer-api:1.0.0
+          imagePullPolicy: IfNotPresent  # image is side-loaded with `kind load`, not pulled
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: cancer-api-config
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cancer-api-secret
+                  key: API_KEY
+          # requests = what the scheduler RESERVES on a node (and the HPA's 100% mark).
+          # limits   = the hard ceiling: CPU above it is throttled, memory above it = OOMKilled.
+          resources:
+            requests:
+              cpu: 250m           # a quarter of one CPU core
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # startup: give the app time to load the model before the other probes start.
+          startupProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 2
+            failureThreshold: 30  # up to 60s to start
+          # readiness: failing -> pod removed from the Service (no traffic), NOT restarted.
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+            failureThreshold: 3
+          # liveness: failing -> container is killed and restarted.
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              # On shutdown, wait 5s so the Service stops routing here BEFORE the app exits.
+              exec:
+                command: ["sleep", "5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true   # the app cannot modify its own image files
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}            # scratch space, since the root filesystem is read-only

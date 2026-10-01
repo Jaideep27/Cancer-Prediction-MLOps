@@ -1,0 +1,27 @@
+# HorizontalPodAutoscaler: adds/removes pods based on load.
+# Every ~15s it reads CPU usage from metrics-server and computes
+#   desired = ceil(current_replicas * current_cpu% / target_cpu%)
+# CPU% is measured against the pod's CPU *request* (250m), not the limit.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cancer-api
+  labels:
+    app.kubernetes.io/name: cancer-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cancer-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60   # wait 1 min of low load before removing pods (no flapping)
