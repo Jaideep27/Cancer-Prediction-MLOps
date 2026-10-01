@@ -47,6 +47,7 @@ This file records **what was actually run and observed**, plus the problems hit 
 | Bad image | `set image ...:does-not-exist` | New pod `ImagePullBackOff`; old pods kept serving; undo fixed it |
 | Broken readiness probe | Probe path `/nope` | New pod `0/1 Running`, never got traffic; old pods kept serving |
 | Out of memory | Limit 60Mi (app needs ~125Mi) | `OOMKilled`, exit code 137, `CrashLoopBackOff`; old pods kept serving |
+| CI on GitHub | Push to `main` of `Jaideep27/Cancer-Prediction-MLOps` | All 4 jobs green: lint+types, tests, security, train → build → run → smoke-test image |
 
 ---
 
@@ -61,6 +62,7 @@ This file records **what was actually run and observed**, plus the problems hit 
 | The autoscaler never scaled during the first load test | The load script rebuilt its HTTP client per request (5.6 req/s) | Send `Connection: close` instead, which gave 142–199 req/s |
 | Out-of-memory demo rejected | A memory request (256Mi) can't exceed the limit (60Mi); the API server validates every change | Lower the request too |
 | `rollout undo` restored a **broken** version | `undo` = "back one revision"; the rejected change made no revision, so undo went to the version before | Use `--to-revision=N`, or `kubectl apply -k` from git (the YAML in git is the source of truth) |
+| Pushing tag `v0-original` started the **old** CD workflow | Workflows run from the file version at the pushed commit; the old `cd.yml` matched any `v*` tag | Cancelled both runs during the build step. Use strict tag patterns (`v*.*.*`) |
 | Model lineage pointed to the wrong MLflow server | Last training run had `MLFLOW_TRACKING_URI` set to the Compose server | Retrained locally; the bundle's run id now exists in `mlflow.db` |
 
 ---

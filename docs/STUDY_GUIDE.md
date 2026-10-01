@@ -396,8 +396,12 @@ desired replicas = ceil(current replicas × current CPU% ÷ target CPU%).
 - **Continuous delivery vs deployment:**
   - *Delivery:* every change is *ready* to release, and a human presses the button. That's our `environment: production` approval.
   - *Deployment:* every passing change goes live automatically, with no human step.
-- **Honest note:** the deploy job needs an internet-reachable cluster. Your kind cluster isn't one, so the job
-  skips. The workflows haven't been run on GitHub yet: push the repo to see them run.
+- **Honest note:**
+  - **CI has run on GitHub and passes all 4 jobs**, including training the model, building the image and smoke-testing real predictions inside it.
+  - The CD deploy job needs an internet-reachable cluster. Your kind cluster isn't one, so that job skips.
+- **Lesson learned the hard way:** a workflow runs from the version of the file **at the commit being pushed**.
+  Pushing the tag `v0-original`, which points at the old code, triggered the *old* `cd.yml`, which ran on any `v*` tag.
+  We cancelled it. Tag triggers should use a strict pattern like `v*.*.*`, as ours do.
 
 **Test yourself:** What does each workflow protect? Delivery vs deployment? How does a bad model get blocked?
 
